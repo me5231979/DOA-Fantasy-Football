@@ -604,8 +604,36 @@ function renderClock(){
     el.innerHTML = `
       <span class="pickno" style="color:var(--gold)">✎ Editing pick ${pickLabel(editingPick+1,T)}</span>
       <span class="team">${esc(teamName(teamAtPick(editingPick+1,T)))}</span>
-      <span class="meta">currently ${cur?esc(cur.name):"—"} — hit “Draft” on the replacement player</span>
-      <button id="editCancel" class="small">Cancel edit</button>`;
+      <span class="meta">currently ${cur?esc(cur.name):"—"} — hit “Draft” on a player, or type a name:</span>
+      <input id="editName" placeholder="Type player name…" style="width:150px;padding:3px 8px">
+      <select id="editPos" style="padding:3px 6px">${["QB","RB","WR","TE","K","DST"].map(p=>`<option${cur&&cur.pos===p?" selected":""}>${p}</option>`).join("")}</select>
+      <button id="editApply" class="small primary">Swap in</button>
+      <button id="editDelete" class="small danger">🗑 Delete pick</button>
+      <button id="editCancel" class="small">Cancel</button>`;
+    const apply=()=>{
+      const name=$("#editName").value.trim(); if(!name){ alert("Type a name first (or hit Draft on a player below)."); return; }
+      const pos=$("#editPos").value;
+      let m=S.players.find(p=>norm(p.name)===norm(name));
+      if(m){
+        const at=S.picks.indexOf(m.id);
+        if(at>=0 && at!==editingPick){ toast(`${m.name} is already drafted at ${pickLabel(at+1,T)}.`); return; }
+      }else{
+        m={id:Math.max(0,...S.players.map(p=>p.id))+1, name, pos, team:"FA", adp:250, tier:9};
+        S.players.push(m);
+      }
+      const p=editingPick+1, t=teamAtPick(p,T);
+      S.picks[editingPick]=m.id; editingPick=null;
+      toast(`Edited ${pickLabel(p,T)} — ${teamName(t)} now has ${m.name}`);
+      render();
+    };
+    $("#editApply").onclick=apply;
+    $("#editName").addEventListener("keydown",e=>{ if(e.key==="Enter") apply(); });
+    $("#editDelete").onclick=()=>{
+      if(!confirm(`Delete pick ${pickLabel(editingPick+1,T)} (${cur?cur.name:"—"})? Every later pick moves up one spot.`)) return;
+      S.picks.splice(editingPick,1); editingPick=null;
+      toast("Pick deleted — later picks shifted up.");
+      render();
+    };
     $("#editCancel").onclick=()=>{ editingPick=null; render(); };
     return;
   }
