@@ -547,8 +547,9 @@ function needMult(pos, fill, roundsLeft){
 
 /* =================== recommendations =================== */
 function recommend(){
-  if(draftDone()) return [];
-  const now = currentPick();
+  if(draftDone() && unassignedCount()===0) return [];
+  // board full but slots unassigned: recommend for the earliest open slot
+  const now = draftDone()? firstUnassignedIdx()+1 : currentPick();
   const fill = slotFill(S.cfg.slot);
   const mineOnClock = teamAtPick(now, S.cfg.teams)===S.cfg.slot;
   const future = myNextPicks(now); // strictly after current pick
@@ -611,6 +612,16 @@ function nextOpenPickFor(t){ // 0-based index of team t's earliest unfilled pick
     if(p>S.picks.length || !byId(S.picks[p-1])) return p-1;
   }
   return null;
+}
+function firstUnassignedIdx(){ // earliest recorded slot with no player, or null
+  const N=Math.min(S.picks.length,totalPicks(S.cfg));
+  for(let i=0;i<N;i++) if(!byId(S.picks[i])) return i;
+  return null;
+}
+function unassignedCount(){
+  const N=Math.min(S.picks.length,totalPicks(S.cfg));
+  let n=0; for(let i=0;i<N;i++) if(!byId(S.picks[i])) n++;
+  return n;
 }
 let logDragFrom=null; // 0-based pick index being dragged from the pick log
 function movePickToTeam(from,t){ // reassign the player at pick index `from` to team t's earliest open pick
@@ -684,7 +695,18 @@ function renderClock(){
     $("#editCancel").onclick=cancelEdit;
     return;
   }
-  if(draftDone()){ el.innerHTML = `<span class="pickno">Draft complete 🎉</span><span class="meta">${S.picks.length} picks recorded — check the board for the full results.</span>`; return; }
+  if(draftDone()){
+    const open=unassignedCount();
+    if(open>0){
+      el.innerHTML = `
+        <span class="pickno" style="color:var(--gold)">${open} pick${open===1?"":"s"} unassigned</span>
+        <span class="meta">every slot is recorded, but ${open===1?"one still needs":open+" still need"} a player — hit “Draft” on a player to fill the earliest open slot, or use ✎ Edit / the board for a specific one</span>
+        <button id="fixNext" class="small primary">✎ Fill next unassigned</button>`;
+      $("#fixNext").onclick=()=>{ const i=firstUnassignedIdx(); if(i!==null) editAt(i); };
+      return;
+    }
+    el.innerHTML = `<span class="pickno">Draft complete 🎉</span><span class="meta">${S.picks.length} picks recorded — check the board for the full results.</span>`; return;
+  }
   const p=currentPick(), T=S.cfg.teams, t=teamAtPick(p,T), me = t===S.cfg.slot;
   const nxt = myNextPicks(me ? p : p-1);
   const untilMine = me ? 0 : (nxt[0] ? nxt[0]-p : "—");
@@ -784,7 +806,7 @@ function renderPlayers(){
   for(const p of rows){
     const s=Math.round(survives(p,target)*100);
     const cls = s>=70?"low":s>=40?"mid":"high";
-    html.push(`<tr class="playerRow"><td class="num" style="color:var(--dim)">${p.adp}</td><td><b>${esc(p.name)}</b></td><td><span class="pos ${p.pos}">${p.pos}</span></td><td style="color:var(--dim)">${esc(p.team)}</td><td class="num" style="color:var(--dim)">${byeOf(p)||"—"}</td><td class="num" style="color:var(--dim)">${p.tier||"—"}</td><td class="num">${vor(p).toFixed(0)}</td><td class="num"><span class="risk ${cls}">${s}%</span></td><td><button class="small primary" data-draft="${p.id}" ${draftDone()&&editingPick===null?"disabled":""}>Draft</button></td></tr>`);
+    html.push(`<tr class="playerRow"><td class="num" style="color:var(--dim)">${p.adp}</td><td><b>${esc(p.name)}</b></td><td><span class="pos ${p.pos}">${p.pos}</span></td><td style="color:var(--dim)">${esc(p.team)}</td><td class="num" style="color:var(--dim)">${byeOf(p)||"—"}</td><td class="num" style="color:var(--dim)">${p.tier||"—"}</td><td class="num">${vor(p).toFixed(0)}</td><td class="num"><span class="risk ${cls}">${s}%</span></td><td><button class="small primary" data-draft="${p.id}" ${draftDone()&&editingPick===null&&unassignedCount()===0?"disabled":""}>Draft</button></td></tr>`);
   }
   html.push("</tbody></table>");
   if(!rows.length) html.splice(0,html.length,"<p style='color:var(--dim);padding:10px'>No players match.</p>");
@@ -793,8 +815,9 @@ function renderPlayers(){
 }
 function renderRecs(){
   const box=$("#recList");
-  if(draftDone()){ box.innerHTML=`<p style="color:var(--dim)">Draft complete — nice work.</p>`; return; }
-  const me = teamAtPick(currentPick(),S.cfg.teams)===S.cfg.slot;
+  if(draftDone() && unassignedCount()===0){ box.innerHTML=`<p style="color:var(--dim)">Draft complete — nice work.</p>`; return; }
+  const now = draftDone()? firstUnassignedIdx()+1 : currentPick();
+  const me = teamAtPick(now,S.cfg.teams)===S.cfg.slot;
   $("#recTitle").textContent = me ? "You're on the clock — best picks" : "If you were picking now";
   const recs = recommend();
   const max = recs.length? recs[0].score : 1;
@@ -833,7 +856,17 @@ function draftPlayer(id){
     toast(`Edited ${pickLabel(p,S.cfg.teams)} — ${teamName(t)} now has ${pl.name}`);
     render(); return;
   }
-  if(draftDone() || isDrafted(id)) return;
+  if(draftDone()){ // board is full — fill the earliest unassigned slot instead
+    const idx=firstUnassignedIdx();
+    if(idx===null) return;
+    const at=S.picks.indexOf(id);
+    if(at>=0 && !confirm(`${pl.name} is already drafted at ${pickLabel(at+1,S.cfg.teams)}. Assign him at ${pickLabel(idx+1,S.cfg.teams)} too (duplicate)?`)) return;
+    const t=teamAtPick(idx+1,S.cfg.teams);
+    S.picks[idx]=id;
+    toast(`${pickLabel(idx+1,S.cfg.teams)} — ${teamName(t)} gets ${pl.name}`);
+    render(); return;
+  }
+  if(isDrafted(id)) return;
   const p=currentPick(), t=teamAtPick(p,S.cfg.teams);
   S.picks.push(id);
   toast(`${pickLabel(p,S.cfg.teams)} — ${teamName(t)} drafts ${pl.name}`);
