@@ -440,9 +440,9 @@ function myNextPicks(fromExclusive){ // overall pick numbers belonging to me aft
 const currentPick = () => S.picks.length+1;
 const draftDone   = () => S.picks.length >= totalPicks(S.cfg);
 function teamName(t){ return (S.cfg.names[t-1]||"").trim() || "Team "+t; }
-function teamPicks(t){ // player objects drafted by team t, in order
+function teamPicks(t){ // player objects drafted by team t, in order (skips unassigned slots)
   const out=[], T=S.cfg.teams;
-  S.picks.forEach((pid,i)=>{ if(teamAtPick(i+1,T)===t) out.push(byId(pid)); });
+  S.picks.forEach((pid,i)=>{ if(teamAtPick(i+1,T)===t){ const pl=byId(pid); if(pl) out.push(pl); } });
   return out;
 }
 const byId = id => S.players.find(p=>p.id===id);
@@ -608,7 +608,8 @@ function renderClock(){
       <input id="editName" placeholder="Type player name…" style="width:150px;padding:3px 8px">
       <select id="editPos" style="padding:3px 6px">${["QB","RB","WR","TE","K","DST"].map(p=>`<option${cur&&cur.pos===p?" selected":""}>${p}</option>`).join("")}</select>
       <button id="editApply" class="small primary">Swap in</button>
-      <button id="editDelete" class="small danger">🗑 Delete pick</button>
+      <button id="editClear" class="small" title="Keep the pick slot but remove the player — nothing shifts">⏭ Leave unassigned</button>
+      <button id="editDelete" class="small danger" title="Remove the pick entirely — every later pick moves up one spot">🗑 Remove &amp; shift</button>
       <button id="editCancel" class="small">Cancel</button>`;
     const apply=()=>{
       const name=$("#editName").value.trim(); if(!name){ alert("Type a name first (or hit Draft on a player below)."); return; }
@@ -628,6 +629,12 @@ function renderClock(){
     };
     $("#editApply").onclick=apply;
     $("#editName").addEventListener("keydown",e=>{ if(e.key==="Enter") apply(); });
+    $("#editClear").onclick=()=>{
+      const p=editingPick+1;
+      S.picks[editingPick]=0; editingPick=null;
+      toast(`Pick ${pickLabel(p,T)} is now unassigned — edit it any time to fill it in.`);
+      render();
+    };
     $("#editDelete").onclick=()=>{
       if(!confirm(`Delete pick ${pickLabel(editingPick+1,T)} (${cur?cur.name:"—"})? Every later pick moves up one spot.`)) return;
       S.picks.splice(editingPick,1); editingPick=null;
@@ -644,7 +651,13 @@ function renderClock(){
   el.innerHTML = `
     <span class="pickno">Pick ${pickLabel(p,T)}</span>
     <span class="team">${esc(teamName(t))}${me?'<span class="you">YOU</span>':""}</span>
-    <span class="meta">overall #${p} · ${me ? "you're on the clock — see recommendations →" : `${untilMine} pick${untilMine===1?"":"s"} until your turn (${nxt[0]?pickLabel(nxt[0],T):"—"})`}</span>`;
+    <span class="meta">overall #${p} · ${me ? "you're on the clock — see recommendations →" : `${untilMine} pick${untilMine===1?"":"s"} until your turn (${nxt[0]?pickLabel(nxt[0],T):"—"})`}</span>
+    <button id="skipPick" class="small" title="Record this pick without a player — fill it in later with ✎ Edit">⏭ Skip / unknown</button>`;
+  $("#skipPick").onclick=()=>{
+    S.picks.push(0);
+    toast(`${pickLabel(p,T)} recorded as unassigned — edit it later to fill in the player.`);
+    render();
+  };
 }
 function renderTabs(){
   const box=$("#teamTabs"); box.innerHTML="";
@@ -677,10 +690,13 @@ function renderLog(){
   const ul=$("#logList"); ul.innerHTML="";
   const T=S.cfg.teams;
   for(let i=S.picks.length-1;i>=0;i--){
-    const pl=byId(S.picks[i]); if(!pl) continue;
+    const pl=byId(S.picks[i]);
     const li=document.createElement("li");
     if(i===editingPick) li.classList.add("editing");
-    li.innerHTML=`<span class="pk">${pickLabel(i+1,T)}</span><span class="pos ${pl.pos}">${pl.pos}</span><span>${esc(pl.name)}</span><span class="tm">${esc(teamName(teamAtPick(i+1,T)))}</span><button class="edit" data-edit="${i}" title="Change who was taken at this pick">✎ Edit</button>`;
+    li.innerHTML=`<span class="pk">${pickLabel(i+1,T)}</span>` + (pl
+      ? `<span class="pos ${pl.pos}">${pl.pos}</span><span>${esc(pl.name)}</span>`
+      : `<span class="pos" style="background:#3d4757;color:#8b98a9">—</span><span style="color:var(--dim);font-style:italic">not assigned</span>`)
+      + `<span class="tm">${esc(teamName(teamAtPick(i+1,T)))}</span><button class="edit" data-edit="${i}" title="Change who was taken at this pick">✎ Edit</button>`;
     ul.appendChild(li);
   }
   ul.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>{ editingPick=+b.dataset.edit; render(); });
@@ -759,7 +775,7 @@ function undo(){
   if(!S.picks.length) return;
   editingPick=null;
   const id=S.picks.pop(); const pl=byId(id);
-  toast(`Undid pick: ${pl?pl.name:"?"}`);
+  toast(`Undid pick: ${pl?pl.name:"(unassigned)"}`);
   render();
 }
 
