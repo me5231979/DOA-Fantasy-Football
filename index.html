@@ -57,6 +57,9 @@ main{display:grid;grid-template-columns:290px 1fr 330px;gap:12px;padding:12px 16
 .logList li{display:flex;gap:8px;align-items:center;padding:3px 2px;font-size:12.5px;border-bottom:1px dashed var(--line)}
 .logList li .pk{color:var(--dim);width:44px}
 .logList li .tm{color:var(--dim);margin-left:auto;text-align:right;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.logList li button.edit{padding:0 6px;font-size:11px;color:var(--dim)}
+.logList li button.edit:hover{color:var(--gold);border-color:var(--gold)}
+.logList li.editing{outline:1px dashed var(--gold);outline-offset:-1px}
 
 /* available players */
 #filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
@@ -419,6 +422,9 @@ function updateSaveState(mode){
 }
 
 /* ======================= draft math ======================= */
+// 2026 bye weeks by team (no byes wk 1-4, 12, 15-18). CSV "BYE" column overrides.
+const BYE2026={ARI:14,ATL:11,BAL:13,BUF:7,CAR:5,CHI:10,CIN:6,CLE:11,DAL:14,DEN:10,DET:6,GB:11,HOU:8,IND:13,JAX:7,KC:5,LAC:7,LAR:11,LV:13,MIA:6,MIN:6,NE:11,NO:8,NYG:8,NYJ:13,PHI:10,PIT:9,SEA:11,SF:8,TB:10,TEN:9,WAS:7};
+const byeOf = p => p.bye || BYE2026[p.team] || null;
 const totalRounds = c => c.qb+c.rb+c.wr+c.te+c.flex+c.k+c.dst+c.bn;
 const totalPicks  = c => totalRounds(c)*c.teams;
 function teamAtPick(p, T){ // 1-based overall pick -> 1-based team slot
@@ -548,6 +554,9 @@ function recommend(){
   const tierCount = {};
   avail.forEach(p=>{ const k=p.pos+"|"+p.tier; tierCount[k]=(tierCount[k]||0)+1; });
 
+  const myByes={}; // how many of my picks share each bye week
+  teamPicks(S.cfg.slot).forEach(pl=>{ if(!pl) return; const b=byeOf(pl); if(b) myByes[b]=(myByes[b]||0)+1; });
+
   const scored = avail.map(p=>{
     const v = vor(p);
     const nm = needMult(p.pos, fill, roundsLeft);
@@ -565,6 +574,8 @@ function recommend(){
     else if(["RB","WR","TE"].includes(p.pos) && fill.flexOpen) reasons.push(`Slides into your open FLEX`);
     else if(p.pos!=="K"&&p.pos!=="DST") reasons.push(`Depth/upside — ${p.pos} starters are set`);
     if((p.pos==="K"||p.pos==="DST") && nm<0.5) reasons.push(`Too early for ${p.pos} — wait for the last rounds`);
+    const b=byeOf(p), overlap=b? (myByes[b]||0) : 0;
+    if(overlap>=2){ score*=Math.pow(0.96,overlap); reasons.push(`⚠ Bye W${b} piles up — ${overlap} of your picks are already off that week`); }
     return {p, score, v, surv, reasons};
   });
   scored.sort((a,b)=>b.score-a.score);
@@ -574,6 +585,7 @@ function recommend(){
 /* =================== rendering =================== */
 const $ = s => document.querySelector(s);
 let posFilter="ALL";
+let editingPick=null; // index into S.picks while re-assigning a recorded pick
 function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),2200); }
 
 function render(){
@@ -587,6 +599,16 @@ function renderHeader(){
 function ordinal(n){ const s=["th","st","nd","rd"],v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); }
 function renderClock(){
   const el=$("#clockBar");
+  if(editingPick!==null){
+    const cur=byId(S.picks[editingPick]), T=S.cfg.teams;
+    el.innerHTML = `
+      <span class="pickno" style="color:var(--gold)">✎ Editing pick ${pickLabel(editingPick+1,T)}</span>
+      <span class="team">${esc(teamName(teamAtPick(editingPick+1,T)))}</span>
+      <span class="meta">currently ${cur?esc(cur.name):"—"} — hit “Draft” on the replacement player</span>
+      <button id="editCancel" class="small">Cancel edit</button>`;
+    $("#editCancel").onclick=()=>{ editingPick=null; render(); };
+    return;
+  }
   if(draftDone()){ el.innerHTML = `<span class="pickno">Draft complete 🎉</span><span class="meta">${S.picks.length} picks recorded — check the board for the full results.</span>`; return; }
   const p=currentPick(), T=S.cfg.teams, t=teamAtPick(p,T), me = t===S.cfg.slot;
   const nxt = myNextPicks(me ? p : p-1);
@@ -615,7 +637,7 @@ function renderRoster(){
     const li=document.createElement("li");
     if(!s.player) li.classList.add("empty");
     li.innerHTML = `<span class="slot">${s.slot}</span>` + (s.player
-      ? `<span class="pos ${s.player.pos}">${s.player.pos}</span><span class="name">${esc(s.player.name)}</span><span style="margin-left:auto;color:var(--dim);font-size:11px">${esc(s.player.team)}</span>`
+      ? `<span class="pos ${s.player.pos}">${s.player.pos}</span><span class="name">${esc(s.player.name)}</span><span style="margin-left:auto;color:var(--dim);font-size:11px">${esc(s.player.team)}${byeOf(s.player)?" · W"+byeOf(s.player):""}</span>`
       : `<span class="name">—</span>`);
     ul.appendChild(li);
   });
@@ -626,9 +648,11 @@ function renderLog(){
   for(let i=S.picks.length-1;i>=0;i--){
     const pl=byId(S.picks[i]); if(!pl) continue;
     const li=document.createElement("li");
-    li.innerHTML=`<span class="pk">${pickLabel(i+1,T)}</span><span class="pos ${pl.pos}">${pl.pos}</span><span>${esc(pl.name)}</span><span class="tm">${esc(teamName(teamAtPick(i+1,T)))}</span>`;
+    if(i===editingPick) li.classList.add("editing");
+    li.innerHTML=`<span class="pk">${pickLabel(i+1,T)}</span><span class="pos ${pl.pos}">${pl.pos}</span><span>${esc(pl.name)}</span><span class="tm">${esc(teamName(teamAtPick(i+1,T)))}</span><button class="edit" data-edit="${i}" title="Change who was taken at this pick">✎</button>`;
     ul.appendChild(li);
   }
+  ul.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>{ editingPick=+b.dataset.edit; render(); });
   if(!S.picks.length) ul.innerHTML=`<li style="color:var(--dim)">No picks yet — when anyone drafts, record it here by hitting “Draft” on the player.</li>`;
 }
 function renderPlayers(){
@@ -641,11 +665,11 @@ function renderPlayers(){
     .filter(p=>posFilter==="ALL"||p.pos===posFilter)
     .filter(p=>!q || p.name.toLowerCase().includes(q) || p.team.toLowerCase().includes(q))
     .sort((a,b)=>a.adp-b.adp).slice(0,150);
-  const html = ["<table><thead><tr><th class='num'>ADP</th><th>Player</th><th></th><th>Tm</th><th class='num'>Tier</th><th class='num'>VOR</th><th class='num' title='Chance the player is still available at your next pick'>@Next</th><th></th></tr></thead><tbody>"];
+  const html = ["<table><thead><tr><th class='num'>ADP</th><th>Player</th><th></th><th>Tm</th><th class='num'>Bye</th><th class='num'>Tier</th><th class='num'>VOR</th><th class='num' title='Chance the player is still available at your next pick'>@Next</th><th></th></tr></thead><tbody>"];
   for(const p of rows){
     const s=Math.round(survives(p,target)*100);
     const cls = s>=70?"low":s>=40?"mid":"high";
-    html.push(`<tr class="playerRow"><td class="num" style="color:var(--dim)">${p.adp}</td><td><b>${esc(p.name)}</b></td><td><span class="pos ${p.pos}">${p.pos}</span></td><td style="color:var(--dim)">${esc(p.team)}</td><td class="num" style="color:var(--dim)">${p.tier||"—"}</td><td class="num">${vor(p).toFixed(0)}</td><td class="num"><span class="risk ${cls}">${s}%</span></td><td><button class="small primary" data-draft="${p.id}" ${draftDone()?"disabled":""}>Draft</button></td></tr>`);
+    html.push(`<tr class="playerRow"><td class="num" style="color:var(--dim)">${p.adp}</td><td><b>${esc(p.name)}</b></td><td><span class="pos ${p.pos}">${p.pos}</span></td><td style="color:var(--dim)">${esc(p.team)}</td><td class="num" style="color:var(--dim)">${byeOf(p)||"—"}</td><td class="num" style="color:var(--dim)">${p.tier||"—"}</td><td class="num">${vor(p).toFixed(0)}</td><td class="num"><span class="risk ${cls}">${s}%</span></td><td><button class="small primary" data-draft="${p.id}" ${draftDone()&&editingPick===null?"disabled":""}>Draft</button></td></tr>`);
   }
   html.push("</tbody></table>");
   if(!rows.length) html.splice(0,html.length,"<p style='color:var(--dim);padding:10px'>No players match.</p>");
@@ -662,7 +686,7 @@ function renderRecs(){
   box.innerHTML = recs.map((r,i)=>`
     <div class="recCard ${i===0?"top":""}">
       <div class="head"><span class="pos ${r.p.pos}">${r.p.pos}</span><span class="name">${esc(r.p.name)}</span>
-        <span style="color:var(--dim);font-size:12px">${esc(r.p.team)}</span><span class="score">${r.score.toFixed(0)}</span></div>
+        <span style="color:var(--dim);font-size:12px">${esc(r.p.team)}${byeOf(r.p)?" · Bye W"+byeOf(r.p):""}</span><span class="score">${r.score.toFixed(0)}</span></div>
       <ul>${r.reasons.slice(0,3).map(x=>`<li>${esc(x)}</li>`).join("")}</ul>
       <div class="bar"><i style="width:${Math.max(6,100*r.score/max).toFixed(0)}%"></i></div>
       ${me?`<button class="draftBtn primary small" data-draft="${r.p.id}">Draft ${esc(r.p.name)}</button>`:""}
@@ -678,14 +702,23 @@ function renderNeeds(){
   $("#needsBox").innerHTML = `
     <p>${open.length? "Open starter slots: "+open.map(p=>`<span class="pos ${p==="FLEX"?"dst":p}">${p}</span>`).join(" ") : "✅ All starters filled — draft best value / upside."}</p>
     <p style="margin-top:8px;color:var(--dim)">Roster: ${["QB","RB","WR","TE","K","DST"].map(p=>`${p} ${fill.counts[p]||0}`).join(" · ")}</p>
+    <p style="margin-top:8px;color:var(--dim)">Bye weeks: ${(()=>{const bb={};teamPicks(S.cfg.slot).forEach(pl=>{if(!pl)return;const b=byeOf(pl);if(b)bb[b]=(bb[b]||0)+1;});const ks=Object.keys(bb).sort((a,b)=>a-b);return ks.length?ks.map(w=>`W${w}×${bb[w]}`).join(" · "):"—";})()}</p>
     <p style="margin-top:8px;color:var(--dim)">Your picks left: ${nxt.length}${nxt.length?` — next at ${nxt.slice(0,3).map(p=>pickLabel(p,S.cfg.teams)).join(", ")}${nxt.length>3?"…":""}`:""}</p>`;
 }
 function esc(s){ return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 /* =================== actions =================== */
 function draftPlayer(id){
-  if(draftDone()) return;
-  const pl=byId(id); if(!pl || isDrafted(id)) return;
+  const pl=byId(id); if(!pl) return;
+  if(editingPick!==null){ // re-assign an already-recorded pick, leave the rest alone
+    const at=S.picks.indexOf(id);
+    if(at>=0 && at!==editingPick){ toast(`${pl.name} is already drafted at ${pickLabel(at+1,S.cfg.teams)}.`); return; }
+    const p=editingPick+1, t=teamAtPick(p,S.cfg.teams);
+    S.picks[editingPick]=id; editingPick=null;
+    toast(`Edited ${pickLabel(p,S.cfg.teams)} — ${teamName(t)} now has ${pl.name}`);
+    render(); return;
+  }
+  if(draftDone() || isDrafted(id)) return;
   const p=currentPick(), t=teamAtPick(p,S.cfg.teams);
   S.picks.push(id);
   toast(`${pickLabel(p,S.cfg.teams)} — ${teamName(t)} drafts ${pl.name}`);
@@ -693,6 +726,7 @@ function draftPlayer(id){
 }
 function undo(){
   if(!S.picks.length) return;
+  editingPick=null;
   const id=S.picks.pop(); const pl=byId(id);
   toast(`Undid pick: ${pl?pl.name:"?"}`);
   render();
@@ -775,7 +809,7 @@ function importCSV(text){
   if(rows.length<2){ alert("Couldn't parse that CSV."); return; }
   const hdr=rows[0].map(h=>h.trim().toLowerCase());
   const find=(...pats)=>hdr.findIndex(h=>pats.some(p=>h.includes(p)));
-  const iName=find("player","name"), iPos=find("pos"), iTeam=find("team","tm"), iRank=find("rk","rank","adp","overall"), iTier=find("tier");
+  const iName=find("player","name"), iPos=find("pos"), iTeam=find("team","tm"), iRank=find("rk","rank","adp","overall"), iTier=find("tier"), iBye=find("bye");
   if(iName<0||iPos<0){ alert("Need at least a player-name column and a position column."); return; }
   const players=[]; let id=1;
   for(let r=1;r<rows.length;r++){
@@ -787,7 +821,8 @@ function importCSV(text){
     const adp = iRank>=0 ? parseFloat(row[iRank]) : NaN;
     players.push({id:id++, name, pos, team:(iTeam>=0?(row[iTeam]||"").trim().toUpperCase():"")||"—",
                   adp: isFinite(adp)? adp : players.length+1,
-                  tier: iTier>=0 ? (parseInt(row[iTier])||null) : null});
+                  tier: iTier>=0 ? (parseInt(row[iTier])||null) : null,
+                  bye: iBye>=0 ? (parseInt(row[iBye])||null) : null});
   }
   if(players.length<20){ alert("Only found "+players.length+" usable rows — check the CSV columns."); return; }
   players.sort((a,b)=>a.adp-b.adp);
@@ -849,7 +884,7 @@ function boot(){
   $("#btnUndo").onclick=undo;
   $("#btnBoard").onclick=()=>{ renderBoard(); $("#boardModal").classList.add("open"); };
   $("#boardClose").onclick=()=>$("#boardModal").classList.remove("open");
-  $("#btnReset").onclick=()=>{ if(confirm("Clear all picks (player pool and settings are kept)?")){ S.picks=[]; render(); toast("Draft reset."); } };
+  $("#btnReset").onclick=()=>{ if(confirm("Clear all picks (player pool and settings are kept)?")){ S.picks=[]; editingPick=null; render(); toast("Draft reset."); } };
   $("#btnExport").onclick=exportJSON;
   $("#btnLoad").onclick=()=>$("#loadFile").click();
   $("#loadFile").onchange=e=>{
