@@ -96,6 +96,11 @@ tr.playerRow:hover{background:#1b2331}
 #board td .bpos{font-size:10px;font-weight:800;border-radius:3px;padding:0 3px;color:#0d1117;margin-right:3px}
 #board td.me{outline:2px solid var(--gold);outline-offset:-2px}
 #board td.onclock{outline:2px dashed var(--accent);outline-offset:-2px}
+#board td[draggable="true"]{cursor:grab}
+#board td.dragover{outline:2px solid var(--gold);outline-offset:-2px;background:#2a2416}
+.logList li[draggable="true"]{cursor:grab}
+#teamTabs button.dragover{outline:2px solid var(--gold);outline-offset:-2px;background:#2a2416;color:var(--gold)}
+#rosterList.dragover{outline:2px dashed var(--gold);outline-offset:-2px;background:#2a2416}
 .cQB{background:var(--qb)}.cRB{background:var(--rb)}.cWR{background:var(--wr)}.cTE{background:var(--te)}.cK{background:var(--k)}.cDST{background:var(--dst)}
 
 /* modal */
@@ -607,6 +612,20 @@ function nextOpenPickFor(t){ // 0-based index of team t's earliest unfilled pick
   }
   return null;
 }
+let logDragFrom=null; // 0-based pick index being dragged from the pick log
+function movePickToTeam(from,t){ // reassign the player at pick index `from` to team t's earliest open pick
+  const pl=byId(S.picks[from]);
+  if(!pl) return;
+  const T=S.cfg.teams;
+  if(teamAtPick(from+1,T)===t){ toast(`${pl.name} is already on ${teamName(t)}.`); return; }
+  const idx=nextOpenPickFor(t);
+  if(idx===null){ toast(`${teamName(t)} has no open picks left.`); return; }
+  while(S.picks.length<=idx) S.picks.push(0);
+  S.picks[idx]=S.picks[from];
+  S.picks[from]=0; // leave the old slot unassigned so nothing shifts
+  toast(`Moved ${pl.name} to ${teamName(t)} at ${pickLabel(idx+1,T)}. Old pick is now unassigned.`);
+  render();
+}
 function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),2200); }
 
 function render(){
@@ -688,6 +707,15 @@ function renderTabs(){
     b.textContent = t===S.cfg.slot ? teamName(t)+" ★" : teamName(t);
     if(t===view) b.classList.add("active");
     b.onclick=()=>{S.viewTeam=t; render();};
+    b.ondragover=e=>{ if(logDragFrom!==null){ e.preventDefault(); b.classList.add("dragover"); } };
+    b.ondragleave=()=>b.classList.remove("dragover");
+    b.ondrop=e=>{
+      e.preventDefault(); b.classList.remove("dragover");
+      const from=logDragFrom; logDragFrom=null;
+      if(from===null) return;
+      S.viewTeam=t;
+      movePickToTeam(from,t);
+    };
     box.appendChild(b);
   }
 }
@@ -711,6 +739,14 @@ function renderRoster(){
     if(idx===null){ toast("This team has no open picks left."); return; }
     editAt(idx);
   });
+  ul.ondragover=e=>{ if(logDragFrom!==null){ e.preventDefault(); ul.classList.add("dragover"); } };
+  ul.ondragleave=e=>{ if(!ul.contains(e.relatedTarget)) ul.classList.remove("dragover"); };
+  ul.ondrop=e=>{
+    e.preventDefault(); ul.classList.remove("dragover");
+    const from=logDragFrom; logDragFrom=null;
+    if(from===null) return;
+    movePickToTeam(from,t);
+  };
 }
 function renderLog(){
   const ul=$("#logList"); ul.innerHTML="";
@@ -723,6 +759,12 @@ function renderLog(){
       ? `<span class="pos ${pl.pos}">${pl.pos}</span><span>${esc(pl.name)}</span>`
       : `<span class="pos" style="background:#3d4757;color:#8b98a9">—</span><span style="color:var(--dim);font-style:italic">not assigned</span>`)
       + `<span class="tm">${esc(teamName(teamAtPick(i+1,T)))}</span><button class="edit" data-edit="${i}" title="Change who was taken at this pick">✎ Edit</button>`;
+    if(pl){
+      li.draggable=true;
+      li.title="Drag onto a team tab (or the roster) to move this player to that team";
+      li.ondragstart=e=>{ logDragFrom=i; e.dataTransfer.effectAllowed="move"; };
+      li.ondragend=()=>{ logDragFrom=null; };
+    }
     ul.appendChild(li);
   }
   ul.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>{ editingPick=+b.dataset.edit; render(); });
@@ -820,13 +862,32 @@ function renderBoard(){
       const pid = S.picks[p-1];
       const pl = pid? byId(pid): null;
       const cls = (t===S.cfg.slot?"me ":"") + (p===now && !draftDone() ? "onclock":"");
-      h+=`<td class="${cls}" data-pick="${p}" title="Click to set this pick" style="cursor:pointer">` + (pl? `<span class="bpos c${pl.pos}">${pl.pos}</span><span class="bp">${esc(pl.name)}</span>` : `<span style="color:#39424f">${pickLabel(p,T)}</span>`) + "</td>";
+      h+=`<td class="${cls}" data-pick="${p}"${pl?' draggable="true"':''} title="${pl?"Drag to move/swap, or click to edit":"Click to set this pick"}" style="cursor:pointer">` + (pl? `<span class="bpos c${pl.pos}">${pl.pos}</span><span class="bp">${esc(pl.name)}</span>` : `<span style="color:#39424f">${pickLabel(p,T)}</span>`) + "</td>";
     }
     h+="</tr>";
   }
   h+="</tbody></table>";
   $("#boardWrap").innerHTML=h;
-  $("#boardWrap").querySelectorAll("[data-pick]").forEach(td=>td.onclick=()=>editAt(+td.dataset.pick-1));
+  let dragFrom=null;
+  $("#boardWrap").querySelectorAll("[data-pick]").forEach(td=>{
+    td.onclick=()=>editAt(+td.dataset.pick-1);
+    if(td.getAttribute("draggable")==="true")
+      td.ondragstart=e=>{ dragFrom=+td.dataset.pick; e.dataTransfer.effectAllowed="move"; };
+    td.ondragover=e=>{ if(dragFrom!==null && dragFrom!==+td.dataset.pick){ e.preventDefault(); td.classList.add("dragover"); } };
+    td.ondragleave=()=>td.classList.remove("dragover");
+    td.ondrop=e=>{
+      e.preventDefault(); td.classList.remove("dragover");
+      const from=dragFrom; dragFrom=null;
+      const to=+td.dataset.pick;
+      if(from===null || from===to) return;
+      while(S.picks.length<to) S.picks.push(0); // pad so a drop on a future slot lands exactly there
+      const a=from-1, b=to-1;
+      const moved=byId(S.picks[a]), disp=byId(S.picks[b]);
+      const tmp=S.picks[b]||0; S.picks[b]=S.picks[a]; S.picks[a]=tmp;
+      toast(disp? `Swapped ${moved.name} ↔ ${disp.name}` : `Moved ${moved.name} to ${pickLabel(to,S.cfg.teams)} (${teamName(teamAtPick(to,S.cfg.teams))})`);
+      render(); renderBoard();
+    };
+  });
 }
 
 /* =================== setup modal =================== */
