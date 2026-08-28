@@ -57,9 +57,9 @@ main{display:grid;grid-template-columns:290px 1fr 330px;gap:12px;padding:12px 16
 .logList li{display:flex;gap:8px;align-items:center;padding:3px 2px;font-size:12.5px;border-bottom:1px dashed var(--line)}
 .logList li .pk{color:var(--dim);width:44px}
 .logList li .tm{color:var(--dim);margin-left:auto;text-align:right;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.logList li button.edit{padding:0 7px;font-size:11px;font-weight:700;color:var(--gold);border-color:var(--gold);white-space:nowrap}
-.logList li button.edit:hover{background:var(--gold);color:#111}
-.logList li.editing{outline:1px dashed var(--gold);outline-offset:-1px}
+.logList li button.edit,.rosterList li button.edit{padding:0 7px;font-size:11px;font-weight:700;color:var(--gold);border-color:var(--gold);white-space:nowrap}
+.logList li button.edit:hover,.rosterList li button.edit:hover{background:var(--gold);color:#111}
+.logList li.editing,.rosterList li.editing{outline:1px dashed var(--gold);outline-offset:-1px}
 
 /* available players */
 #filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
@@ -636,11 +636,14 @@ function renderRoster(){
   fill.slots.forEach(s=>{
     const li=document.createElement("li");
     if(!s.player) li.classList.add("empty");
+    const pi = s.player ? S.picks.indexOf(s.player.id) : -1;
+    if(pi>=0 && pi===editingPick) li.classList.add("editing");
     li.innerHTML = `<span class="slot">${s.slot}</span>` + (s.player
-      ? `<span class="pos ${s.player.pos}">${s.player.pos}</span><span class="name">${esc(s.player.name)}</span><span style="margin-left:auto;color:var(--dim);font-size:11px">${esc(s.player.team)}${byeOf(s.player)?" · W"+byeOf(s.player):""}</span>`
+      ? `<span class="pos ${s.player.pos}">${s.player.pos}</span><span class="name">${esc(s.player.name)}</span><span style="margin-left:auto;color:var(--dim);font-size:11px">${esc(s.player.team)}${byeOf(s.player)?" · W"+byeOf(s.player):""}</span>${pi>=0?`<button class="edit" data-edit="${pi}" title="Change this pick — swap in a different player">✎ Edit</button>`:""}`
       : `<span class="name">—</span>`);
     ul.appendChild(li);
   });
+  ul.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>{ editingPick=+b.dataset.edit; render(); });
 }
 function renderLog(){
   const ul=$("#logList"); ul.innerHTML="";
