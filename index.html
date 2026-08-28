@@ -57,8 +57,8 @@ main{display:grid;grid-template-columns:290px 1fr 330px;gap:12px;padding:12px 16
 .logList li{display:flex;gap:8px;align-items:center;padding:3px 2px;font-size:12.5px;border-bottom:1px dashed var(--line)}
 .logList li .pk{color:var(--dim);width:44px}
 .logList li .tm{color:var(--dim);margin-left:auto;text-align:right;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.logList li button.edit{padding:0 6px;font-size:11px;color:var(--dim)}
-.logList li button.edit:hover{color:var(--gold);border-color:var(--gold)}
+.logList li button.edit{padding:0 7px;font-size:11px;font-weight:700;color:var(--gold);border-color:var(--gold);white-space:nowrap}
+.logList li button.edit:hover{background:var(--gold);color:#111}
 .logList li.editing{outline:1px dashed var(--gold);outline-offset:-1px}
 
 /* available players */
@@ -649,7 +649,7 @@ function renderLog(){
     const pl=byId(S.picks[i]); if(!pl) continue;
     const li=document.createElement("li");
     if(i===editingPick) li.classList.add("editing");
-    li.innerHTML=`<span class="pk">${pickLabel(i+1,T)}</span><span class="pos ${pl.pos}">${pl.pos}</span><span>${esc(pl.name)}</span><span class="tm">${esc(teamName(teamAtPick(i+1,T)))}</span><button class="edit" data-edit="${i}" title="Change who was taken at this pick">✎</button>`;
+    li.innerHTML=`<span class="pk">${pickLabel(i+1,T)}</span><span class="pos ${pl.pos}">${pl.pos}</span><span>${esc(pl.name)}</span><span class="tm">${esc(teamName(teamAtPick(i+1,T)))}</span><button class="edit" data-edit="${i}" title="Change who was taken at this pick">✎ Edit</button>`;
     ul.appendChild(li);
   }
   ul.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>{ editingPick=+b.dataset.edit; render(); });
