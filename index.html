@@ -210,6 +210,7 @@ tr.playerRow:hover{background:#1b2331}
 <div class="modal" id="boardModal">
   <div class="box" style="max-width:96vw">
     <h1 style="margin-bottom:10px">Draft board</h1>
+    <p class="note" style="margin:0 0 10px">Click any slot — filled or empty — to assign or fix that pick.</p>
     <div id="boardWrap"></div>
     <div class="actions"><button id="boardClose" class="primary">Close</button></div>
   </div>
@@ -586,6 +587,26 @@ function recommend(){
 const $ = s => document.querySelector(s);
 let posFilter="ALL";
 let editingPick=null; // index into S.picks while re-assigning a recorded pick
+let editPadFrom=null; // picks length before board-cell padding, to roll back on cancel
+function editAt(pIdx){ // start editing pick index, padding with unassigned slots if it's beyond the last pick
+  if(pIdx>=S.picks.length){ editPadFrom=S.picks.length; while(S.picks.length<=pIdx) S.picks.push(0); }
+  else editPadFrom=null;
+  editingPick=pIdx;
+  $("#boardModal").classList.remove("open");
+  render();
+}
+function cancelEdit(){
+  if(editPadFrom!==null){ S.picks.splice(editPadFrom); editPadFrom=null; }
+  editingPick=null; render();
+}
+function nextOpenPickFor(t){ // 0-based index of team t's earliest unfilled pick, or null
+  const T=S.cfg.teams, N=totalPicks(S.cfg);
+  for(let p=1;p<=N;p++){
+    if(teamAtPick(p,T)!==t) continue;
+    if(p>S.picks.length || !byId(S.picks[p-1])) return p-1;
+  }
+  return null;
+}
 function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),2200); }
 
 function render(){
@@ -617,13 +638,13 @@ function renderClock(){
       let m=S.players.find(p=>norm(p.name)===norm(name));
       if(m){
         const at=S.picks.indexOf(m.id);
-        if(at>=0 && at!==editingPick){ toast(`${m.name} is already drafted at ${pickLabel(at+1,T)}.`); return; }
+        if(at>=0 && at!==editingPick && !confirm(`${m.name} is already drafted at ${pickLabel(at+1,T)}. Assign him here too (duplicate)?`)) return;
       }else{
         m={id:Math.max(0,...S.players.map(p=>p.id))+1, name, pos, team:"FA", adp:250, tier:9};
         S.players.push(m);
       }
       const p=editingPick+1, t=teamAtPick(p,T);
-      S.picks[editingPick]=m.id; editingPick=null;
+      S.picks[editingPick]=m.id; editingPick=null; editPadFrom=null;
       toast(`Edited ${pickLabel(p,T)} — ${teamName(t)} now has ${m.name}`);
       render();
     };
@@ -631,17 +652,17 @@ function renderClock(){
     $("#editName").addEventListener("keydown",e=>{ if(e.key==="Enter") apply(); });
     $("#editClear").onclick=()=>{
       const p=editingPick+1;
-      S.picks[editingPick]=0; editingPick=null;
+      S.picks[editingPick]=0; editingPick=null; editPadFrom=null;
       toast(`Pick ${pickLabel(p,T)} is now unassigned — edit it any time to fill it in.`);
       render();
     };
     $("#editDelete").onclick=()=>{
       if(!confirm(`Delete pick ${pickLabel(editingPick+1,T)} (${cur?cur.name:"—"})? Every later pick moves up one spot.`)) return;
-      S.picks.splice(editingPick,1); editingPick=null;
+      S.picks.splice(editingPick,1); editingPick=null; editPadFrom=null;
       toast("Pick deleted — later picks shifted up.");
       render();
     };
-    $("#editCancel").onclick=()=>{ editingPick=null; render(); };
+    $("#editCancel").onclick=cancelEdit;
     return;
   }
   if(draftDone()){ el.innerHTML = `<span class="pickno">Draft complete 🎉</span><span class="meta">${S.picks.length} picks recorded — check the board for the full results.</span>`; return; }
@@ -681,10 +702,15 @@ function renderRoster(){
     if(pi>=0 && pi===editingPick) li.classList.add("editing");
     li.innerHTML = `<span class="slot">${s.slot}</span>` + (s.player
       ? `<span class="pos ${s.player.pos}">${s.player.pos}</span><span class="name">${esc(s.player.name)}</span><span style="margin-left:auto;color:var(--dim);font-size:11px">${esc(s.player.team)}${byeOf(s.player)?" · W"+byeOf(s.player):""}</span>${pi>=0?`<button class="edit" data-edit="${pi}" title="Change this pick — swap in a different player">✎ Edit</button>`:""}`
-      : `<span class="name">—</span>`);
+      : `<span class="name">—</span><span style="margin-left:auto"></span><button class="edit" data-addteam="${t}" title="Add a player to this team's earliest open pick">＋ Add</button>`);
     ul.appendChild(li);
   });
   ul.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>{ editingPick=+b.dataset.edit; render(); });
+  ul.querySelectorAll("[data-addteam]").forEach(b=>b.onclick=()=>{
+    const idx=nextOpenPickFor(+b.dataset.addteam);
+    if(idx===null){ toast("This team has no open picks left."); return; }
+    editAt(idx);
+  });
 }
 function renderLog(){
   const ul=$("#logList"); ul.innerHTML="";
@@ -759,9 +785,9 @@ function draftPlayer(id){
   const pl=byId(id); if(!pl) return;
   if(editingPick!==null){ // re-assign an already-recorded pick, leave the rest alone
     const at=S.picks.indexOf(id);
-    if(at>=0 && at!==editingPick){ toast(`${pl.name} is already drafted at ${pickLabel(at+1,S.cfg.teams)}.`); return; }
+    if(at>=0 && at!==editingPick && !confirm(`${pl.name} is already drafted at ${pickLabel(at+1,S.cfg.teams)}. Assign him here too (duplicate)?`)) return;
     const p=editingPick+1, t=teamAtPick(p,S.cfg.teams);
-    S.picks[editingPick]=id; editingPick=null;
+    S.picks[editingPick]=id; editingPick=null; editPadFrom=null;
     toast(`Edited ${pickLabel(p,S.cfg.teams)} — ${teamName(t)} now has ${pl.name}`);
     render(); return;
   }
@@ -794,12 +820,13 @@ function renderBoard(){
       const pid = S.picks[p-1];
       const pl = pid? byId(pid): null;
       const cls = (t===S.cfg.slot?"me ":"") + (p===now && !draftDone() ? "onclock":"");
-      h+=`<td class="${cls}">` + (pl? `<span class="bpos c${pl.pos}">${pl.pos}</span><span class="bp">${esc(pl.name)}</span>` : `<span style="color:#39424f">${pickLabel(p,T)}</span>`) + "</td>";
+      h+=`<td class="${cls}" data-pick="${p}" title="Click to set this pick" style="cursor:pointer">` + (pl? `<span class="bpos c${pl.pos}">${pl.pos}</span><span class="bp">${esc(pl.name)}</span>` : `<span style="color:#39424f">${pickLabel(p,T)}</span>`) + "</td>";
     }
     h+="</tr>";
   }
   h+="</tbody></table>";
   $("#boardWrap").innerHTML=h;
+  $("#boardWrap").querySelectorAll("[data-pick]").forEach(td=>td.onclick=()=>editAt(+td.dataset.pick-1));
 }
 
 /* =================== setup modal =================== */
