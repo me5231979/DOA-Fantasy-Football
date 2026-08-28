@@ -882,7 +882,10 @@ function undo(){
 
 /* =================== board modal =================== */
 function renderBoard(){
-  const T=S.cfg.teams, R=totalRounds(S.cfg), now=currentPick();
+  const T=S.cfg.teams, R=totalRounds(S.cfg);
+  // highlight the next slot needing a player: the append point, or the earliest unassigned slot once the board is full
+  const nextIdx = draftDone()? firstUnassignedIdx() : S.picks.length;
+  const now = nextIdx===null? null : nextIdx+1;
   let h="<table id='board'><thead><tr><th class='rnd'></th>";
   for(let t=1;t<=T;t++) h+=`<th${t===S.cfg.slot?" style='color:var(--gold)'":""}>${esc(teamName(t))}${t===S.cfg.slot?" ★":""}</th>`;
   h+="</tr></thead><tbody>";
@@ -894,7 +897,7 @@ function renderBoard(){
       const p = (r-1)*T + i;
       const pid = S.picks[p-1];
       const pl = pid? byId(pid): null;
-      const cls = (t===S.cfg.slot?"me ":"") + (p===now && !draftDone() ? "onclock":"");
+      const cls = (t===S.cfg.slot?"me ":"") + (p===now ? "onclock":"");
       h+=`<td class="${cls}" data-pick="${p}"${pl?' draggable="true"':''} title="${pl?"Drag to move/swap, or click to edit":"Click to set this pick"}" style="cursor:pointer">` + (pl? `<span class="bpos c${pl.pos}">${pl.pos}</span><span class="bp">${esc(pl.name)}</span>` : `<span style="color:#39424f">${pickLabel(p,T)}</span>`) + "</td>";
     }
     h+="</tr>";
