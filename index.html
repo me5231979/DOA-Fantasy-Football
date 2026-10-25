@@ -351,6 +351,7 @@ const SEED = [
 /* ============================ state ============================ */
 const LS_KEY = "ffdraft.v1";
 let S = null; // {cfg, players[], picks[], viewTeam}
+const POSITIONS = ["QB","RB","WR","TE","K","DST"];
 
 function defaultState(){
   return {
@@ -370,6 +371,22 @@ function save(){
 // State can live in two places: localStorage (fast, this browser only) and the
 // #ffstate block embedded in the page itself when hosted as a Claude artifact
 // (durable, follows the artifact everywhere). Boot from whichever is newest.
+// Loaded state (localStorage, #ffstate, or an imported file) is untrusted: coerce
+// fields to the types the renderers expect and drop players with unknown positions.
+function sanitizeState(d){
+  if(!d || typeof d!=="object" || !d.cfg || typeof d.cfg!=="object" || !Array.isArray(d.players)) return null;
+  const num = (v,dflt) => (v==null || v==="" || !isFinite(Number(v))) ? dflt : Number(v);
+  const def = defaultState().cfg;
+  for(const k of ["teams","slot","qb","rb","wr","te","flex","k","dst","bn"]) d.cfg[k] = num(d.cfg[k], def[k]);
+  d.cfg.scoring = String(d.cfg.scoring || def.scoring);
+  d.cfg.names = Array.isArray(d.cfg.names) ? d.cfg.names.map(n=>String(n??"")) : [];
+  d.players = d.players.filter(p=>p && POSITIONS.includes(p.pos)).map(p=>({...p,
+    id:num(p.id,0), name:String(p.name??""), team:String(p.team??""),
+    adp:num(p.adp,999), tier:num(p.tier,null), bye:num(p.bye,null)}));
+  d.picks = Array.isArray(d.picks) ? d.picks.map(id=>num(id,0)) : [];
+  d.viewTeam = num(d.viewTeam, null);
+  return d;
+}
 function load(){
   let local=null, embedded=null;
   try{ const raw = localStorage.getItem(LS_KEY); if(raw) local = JSON.parse(raw); }catch(e){}
@@ -377,9 +394,8 @@ function load(){
     const n = document.getElementById("ffstate");
     if(n && n.textContent.trim()) embedded = JSON.parse(n.textContent);
   }catch(e){}
-  const valid = d => d && d.cfg && d.players;
-  if(!valid(local)) local=null;
-  if(!valid(embedded)) embedded=null;
+  local = sanitizeState(local);
+  embedded = sanitizeState(embedded);
   const best = !local ? embedded : !embedded ? local :
     ((local.savedAt||0) >= (embedded.savedAt||0) ? local : embedded);
   if(best){ S = best; return true; }
@@ -751,7 +767,7 @@ function renderRoster(){
     const pi = s.player ? S.picks.indexOf(s.player.id) : -1;
     if(pi>=0 && pi===editingPick) li.classList.add("editing");
     li.innerHTML = `<span class="slot">${s.slot}</span>` + (s.player
-      ? `<span class="pos ${s.player.pos}">${s.player.pos}</span><span class="name">${esc(s.player.name)}</span><span style="margin-left:auto;color:var(--dim);font-size:11px">${esc(s.player.team)}${byeOf(s.player)?" · W"+byeOf(s.player):""}</span>${pi>=0?`<button class="edit" data-edit="${pi}" title="Change this pick — swap in a different player">✎ Edit</button>`:""}`
+      ? `<span class="pos ${esc(s.player.pos)}">${esc(s.player.pos)}</span><span class="name">${esc(s.player.name)}</span><span style="margin-left:auto;color:var(--dim);font-size:11px">${esc(s.player.team)}${byeOf(s.player)?" · W"+byeOf(s.player):""}</span>${pi>=0?`<button class="edit" data-edit="${pi}" title="Change this pick — swap in a different player">✎ Edit</button>`:""}`
       : `<span class="name">—</span><span style="margin-left:auto"></span><button class="edit" data-addteam="${t}" title="Add a player to this team's earliest open pick">＋ Add</button>`);
     ul.appendChild(li);
   });
@@ -778,7 +794,7 @@ function renderLog(){
     const li=document.createElement("li");
     if(i===editingPick) li.classList.add("editing");
     li.innerHTML=`<span class="pk">${pickLabel(i+1,T)}</span>` + (pl
-      ? `<span class="pos ${pl.pos}">${pl.pos}</span><span>${esc(pl.name)}</span>`
+      ? `<span class="pos ${esc(pl.pos)}">${esc(pl.pos)}</span><span>${esc(pl.name)}</span>`
       : `<span class="pos" style="background:#3d4757;color:#8b98a9">—</span><span style="color:var(--dim);font-style:italic">not assigned</span>`)
       + `<span class="tm">${esc(teamName(teamAtPick(i+1,T)))}</span><button class="edit" data-edit="${i}" title="Change who was taken at this pick">✎ Edit</button>`;
     if(pl){
@@ -806,7 +822,7 @@ function renderPlayers(){
   for(const p of rows){
     const s=Math.round(survives(p,target)*100);
     const cls = s>=70?"low":s>=40?"mid":"high";
-    html.push(`<tr class="playerRow"><td class="num" style="color:var(--dim)">${p.adp}</td><td><b>${esc(p.name)}</b></td><td><span class="pos ${p.pos}">${p.pos}</span></td><td style="color:var(--dim)">${esc(p.team)}</td><td class="num" style="color:var(--dim)">${byeOf(p)||"—"}</td><td class="num" style="color:var(--dim)">${p.tier||"—"}</td><td class="num">${vor(p).toFixed(0)}</td><td class="num"><span class="risk ${cls}">${s}%</span></td><td><button class="small primary" data-draft="${p.id}" ${draftDone()&&editingPick===null&&unassignedCount()===0?"disabled":""}>Draft</button></td></tr>`);
+    html.push(`<tr class="playerRow"><td class="num" style="color:var(--dim)">${esc(p.adp)}</td><td><b>${esc(p.name)}</b></td><td><span class="pos ${esc(p.pos)}">${esc(p.pos)}</span></td><td style="color:var(--dim)">${esc(p.team)}</td><td class="num" style="color:var(--dim)">${byeOf(p)||"—"}</td><td class="num" style="color:var(--dim)">${esc(p.tier||"—")}</td><td class="num">${vor(p).toFixed(0)}</td><td class="num"><span class="risk ${cls}">${s}%</span></td><td><button class="small primary" data-draft="${p.id}" ${draftDone()&&editingPick===null&&unassignedCount()===0?"disabled":""}>Draft</button></td></tr>`);
   }
   html.push("</tbody></table>");
   if(!rows.length) html.splice(0,html.length,"<p style='color:var(--dim);padding:10px'>No players match.</p>");
@@ -823,7 +839,7 @@ function renderRecs(){
   const max = recs.length? recs[0].score : 1;
   box.innerHTML = recs.map((r,i)=>`
     <div class="recCard ${i===0?"top":""}">
-      <div class="head"><span class="pos ${r.p.pos}">${r.p.pos}</span><span class="name">${esc(r.p.name)}</span>
+      <div class="head"><span class="pos ${esc(r.p.pos)}">${esc(r.p.pos)}</span><span class="name">${esc(r.p.name)}</span>
         <span style="color:var(--dim);font-size:12px">${esc(r.p.team)}${byeOf(r.p)?" · Bye W"+byeOf(r.p):""}</span><span class="score">${r.score.toFixed(0)}</span></div>
       <ul>${r.reasons.slice(0,3).map(x=>`<li>${esc(x)}</li>`).join("")}</ul>
       <div class="bar"><i style="width:${Math.max(6,100*r.score/max).toFixed(0)}%"></i></div>
@@ -898,7 +914,7 @@ function renderBoard(){
       const pid = S.picks[p-1];
       const pl = pid? byId(pid): null;
       const cls = (t===S.cfg.slot?"me ":"") + (p===now ? "onclock":"");
-      h+=`<td class="${cls}" data-pick="${p}"${pl?' draggable="true"':''} title="${pl?"Drag to move/swap, or click to edit":"Click to set this pick"}" style="cursor:pointer">` + (pl? `<span class="bpos c${pl.pos}">${pl.pos}</span><span class="bp">${esc(pl.name)}</span>` : `<span style="color:#39424f">${pickLabel(p,T)}</span>`) + "</td>";
+      h+=`<td class="${cls}" data-pick="${p}"${pl?' draggable="true"':''} title="${pl?"Drag to move/swap, or click to edit":"Click to set this pick"}" style="cursor:pointer">` + (pl? `<span class="bpos c${esc(pl.pos)}">${esc(pl.pos)}</span><span class="bp">${esc(pl.name)}</span>` : `<span style="color:#39424f">${pickLabel(p,T)}</span>`) + "</td>";
     }
     h+="</tr>";
   }
@@ -988,7 +1004,7 @@ function importCSV(text){
     const name=(row[iName]||"").trim(); if(!name) continue;
     let pos=(row[iPos]||"").trim().toUpperCase().replace(/[0-9]/g,"");
     if(pos==="DEF"||pos==="D/ST"||pos==="D") pos="DST";
-    if(!["QB","RB","WR","TE","K","DST"].includes(pos)) continue;
+    if(!POSITIONS.includes(pos)) continue;
     const adp = iRank>=0 ? parseFloat(row[iRank]) : NaN;
     players.push({id:id++, name, pos, team:(iTeam>=0?(row[iTeam]||"").trim().toUpperCase():"")||"—",
                   adp: isFinite(adp)? adp : players.length+1,
@@ -1060,7 +1076,7 @@ function boot(){
   $("#btnLoad").onclick=()=>$("#loadFile").click();
   $("#loadFile").onchange=e=>{
     const f=e.target.files[0]; if(!f) return;
-    f.text().then(t=>{ try{ const d=JSON.parse(t); if(d.cfg&&d.players){ S=d; render(); toast("Draft loaded."); } else alert("Not a Draft War Room export."); }catch(err){ alert("Couldn't read that file."); } });
+    f.text().then(t=>{ try{ const d=sanitizeState(JSON.parse(t)); if(d){ S=d; render(); toast("Draft loaded."); } else alert("Not a Draft War Room export."); }catch(err){ alert("Couldn't read that file."); } });
     e.target.value="";
   };
   $("#btnImport").onclick=()=>$("#importModal").classList.add("open");
